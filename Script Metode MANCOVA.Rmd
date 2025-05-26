@@ -1,0 +1,198 @@
+---
+title: "Analisis MANCOVA"
+author: "Kelompok 7"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pendahuluan
+
+Dokumen ini memuat hasil analisis MANCOVA pada dataset *Adult Income* dari UCI. Tujuan dari analisis ini adalah untuk mengetahui pengaruh variabel `age`, `occupation`, dan `income` terhadap dua variabel dependen yaitu `capital.gain` dan `capital.loss`.
+
+Seluruh proses analisis mencakup: pembersihan data, pengujian asumsi MANCOVA (normalitas, homogenitas varians, dll), transformasi data, dan interpretasi hasil.
+
+
+# Load library yang diperlukan
+```{r}
+library(tidyverse)
+library(car)
+library(MVN)
+library(biotools)
+library(ggpubr)
+
+```
+Memanggil pustaka-pustaka yang dibutuhkan seperti tidyverse (manipulasi data), car (analisis ANOVA/MANCOVA), MVN (uji normalitas multivariat), biotools (uji Box's M), dan ggpubr (grafik).
+
+# Load Data
+```{r}
+df <- read.csv("C:/Users/owner/latihan/adult.csv", stringsAsFactors = TRUE)
+```
+# Cek struktur data dan Missing value
+```{r}
+cat("Struktur data awal:\n")
+str(df)
+
+cat("\n5 baris pertama dari data:\n")
+head(df, 5)
+
+cat("\nJumlah missing value per kolom:\n")
+colSums(is.na(df) | df == " ?")
+```
+# Tangani missing value
+```{r}
+df[df == " ?"] <- NA
+cat("\nJumlah missing value setelah konversi ' ?' ke NA:\n")
+colSums(is.na(df))
+```
+Mengganti tanda " ?" menjadi NA agar bisa dibersihkan dan dianalisis secara statistik.
+
+# Samplin dan hapus NA
+```{r}
+df <- df[1:4000, ]
+df <- na.omit(df)
+cat("\nDimensi data setelah sampling dan menghapus NA:\n")
+dim(df)
+```
+mengambil 4000 baris pertama dari dataset untuk analisis dan menghapus baris yang memiliki nilai NA (missing value) dengan fungsi na.omit(). mengambil sampel 4000 data pertama, kita mendapatkan ukuran data yang cukup representatif untuk analisis, tapi tetap efisien dalam hal waktu dan sumber daya komputasi.
+
+# Pilih variabel untuk MANCOVA
+```{r}
+library(dplyr)  # pastikan sudah dipanggil di awal dokumen
+data_mancova <- dplyr::select(df, age, occupation, income, capital.gain, capital.loss)
+
+cat("\nStruktur data_mancova:\n")
+str(data_mancova)
+```
+capital.gain dan capital.loss → Ini adalah variabel dependen dalam analisis MANCOVA. Kita ingin melihat apakah dan bagaimana dua jenis modal finansial ini dipengaruhi oleh variabel lain secara simultan.
+
+age → Dimasukkan sebagai kovariat, karena umur bisa memengaruhi jumlah capital gain/loss yang diperoleh seseorang, tapi bukan faktor eksperimen utama.
+
+occupation dan income → Dimasukkan sebagai variabel independen (faktor), karena kita ingin mengetahui apakah pekerjaan dan tingkat pendapatan seseorang berpengaruh terhadap capital gain dan loss mereka.
+
+# Konversi faktor dan ringkasan
+```{r}
+data_mancova$occupation <- factor(data_mancova$occupation)
+data_mancova$income <- factor(data_mancova$income)
+
+cat("\nRingkasan statistik awal:\n")
+summary(data_mancova)
+```
+Memastikan struktur data sudah sesuai (tipe data dan distribusi kategori benar).  
+Memberi gambaran awal mengenai penyebaran data yang akan dianalisis lebih lanjut.  
+
+# TAHAP ANALISIS
+
+# Uji normalitas Multivariat sebelum transformasi
+```{r}
+normal_pre <- mvn(data_mancova[, c("capital.gain", "capital.loss")], mvnTest = "hz")
+normal_pre$multivariateNormality
+```
+gunakan fungsi mvn() dari package MVN dengan metode Henze-Zirkler, yang menguji apakah gabungan dari variabel capital.gain dan capital.loss mengikuti distribusi normal multivariat.
+
+Nilai HZ tinggi dan p-value = 0, menunjukkan penolakan terhadap normalitas multivariat.  
+Artinya, data capital.gain dan capital.loss secara gabungan tidak terdistribusi normal.  
+
+# Lakukan Transformasi log dan uji1p lagi
+```{r}
+data_mancova$capital.gain <- log1p(data_mancova$capital.gain)
+data_mancova$capital.loss <- log1p(data_mancova$capital.loss)
+
+normal_post <- mvn(data_mancova[, c("capital.gain", "capital.loss")], mvnTest = "hz")
+normal_post$multivariateNormality
+```
+Karena data tidak normal, kita lakukan transformasi log1p pada kedua variabel  
+Meskipun nilai HZ menurun setelah transformasi, p-value tetap 0 dan hasilnya masih tidak normal.  
+Transformasi logaritmik membantu mengurangi skewness, tapi belum cukup untuk memenuhi asumsi normalitas multivariat.  
+
+# Uji Homogenitas Kovarians menggunkan Box-M
+```{r}
+data_mancova$group <- interaction(data_mancova$occupation, data_mancova$income)
+group_count <- table(data_mancova$group)
+valid_groups <- names(group_count[group_count >= 3])
+data_valid <- data_mancova[data_mancova$group %in% valid_groups, ]
+
+boxm_result <- boxM(data_valid[, c("capital.gain", "capital.loss")], data_valid$group)
+boxm_result
+```
+Uji ini mengevaluasi apakah matriks kovarians antar grup sama atau homogen  
+Nilai p-value jauh lebih kecil dari 0.05, maka kita menolak H0 (hipotesis nol bahwa semua matriks kovarians antar grup adalah sama).  
+Artinya, terdapat perbedaan signifikan pada matriks kovarians antar kombinasi occupation dan income.  
+
+# Uji Homogenitas Varians dengan Uji Levene
+```{r}
+leveneTest(capital.gain ~ occupation * income, data = data_mancova)
+leveneTest(capital.loss ~ occupation * income, data = data_mancova)
+```
+Menguji apakah varians antar kelompok (gabungan occupation * income) untuk masing-masing variabel dependen (capital.gain dan capital.loss) adalah homogen.  
+
+Untuk capital.gain:  
+F value = 1.6961  
+p-value = 0.01254 → Signifikan  
+
+Untuk capital.loss:  
+F value = 3.7766  
+p-value = 8.638e-11 → Sangat signifikan  
+
+Kedua p-value < 0.05 → Asumsi homogenitas varians TIDAK terpenuhi untuk kedua variabel dependen.  
+Artinya, terdapat perbedaan varians antara kelompok occupation * income pada capital.gain dan capital.loss.  
+
+# Uji linearitas dengan scatter plot
+```{r}
+scatterplotMatrix(data_mancova[, c("age", "capital.gain", "capital.loss")],
+                  smooth = FALSE)
+```
+age vs capital.gain  
+Tampak pola menyebar horizontal dengan garis tren positif tapi tidak kuat.  
+Kesimpulan: Ada indikasi hubungan linier lemah, namun kemungkinan besar data ini tidak sepenuhnya linier.  
+
+age vs capital.loss  
+Pola sebaran cukup horizontal, garis tren cenderung menurun.  
+Kesimpulan: Ada sedikit indikasi hubungan negatif, namun juga tidak sepenuhnya linier.  
+
+capital.gain vs capital.loss  
+Sangat terlihat berpola L terbalik, menunjukkan non-linear relationship.  
+Garis tren menurun tajam, menandakan bahwa jika salah satu tinggi, yang lain cenderung nol. Ini logis karena data sering menunjukkan orang hanya mendapat gain atau loss, jarang dua-duanya.  
+
+Hubungan antara variabel kovariat (age) dengan variabel dependen (capital.gain, capital.loss) tidak sepenuhnya linier.  
+Pola sebar dan fitting menunjukkan bahwa asumsi linearitas tidak terpenuhi secara kuat.  
+
+# Uji Multikolinearitas
+```{r}
+lm_check <- lm(age ~ occupation + income, data = data_mancova)
+vif(lm_check)
+```
+Hasil uji multikolinearitas menunjukkan bahwa nilai GVIF^(1/(2×Df)) untuk variabel occupation adalah 1.005 dan untuk income adalah 1.077, yang keduanya jauh di bawah ambang batas 2. Ini mengindikasikan bahwa tidak terdapat masalah multikolinearitas antara variabel-variabel independen dalam model, sehingga aman digunakan untuk analisis lebih lanjut
+
+# Model MANCOVA
+```{R}
+model <- manova(cbind(capital.gain, capital.loss) ~ age + occupation + income, data = data_mancova)
+summary(model, test = "Pillai")
+```
+Semua variabel (age, occupation, income) berpengaruh signifikan terhadap gabungan variabel dependen (trans_hours, trans_edu).  
+p-value < 0.001 pada semuanya berarti pengaruhnya sangat signifikan secara statistik.  
+Nilai Pillai's trace mengukur kekuatan pengaruh:  
+- income punya pengaruh terbesar (Pillai: 0.188)  
+- disusul occupation dan age.  
+
+Pillai’s Trace digunakan dalam MANCOVA karena merupakan statistik yang paling robust terhadap pelanggaran asumsi, seperti normalitas multivariat dan homogenitas kovarian. Dibandingkan metode lain (seperti Wilks’ Lambda), Pillai lebih stabil saat data tidak seimbang dan lebih konservatif, sehingga mengurangi risiko kesalahan tipe I. Oleh karena itu, dalam kondisi data yang kompleks dan tidak sepenuhnya memenuhi asumsi klasik, Pillai menjadi pilihan yang paling aman untuk interpretasi hasil.
+
+```{r}
+summary.aov(model)
+```
+Hipotesis Nol (H₀):  
+Setelah mengontrol pengaruh age, tidak terdapat perbedaan yang signifikan pada rata-rata gabungan antara capital.loss dan capital.gain berdasarkan kombinasi dari occupation, dan income.  
+Hipotesis Alternatif (H₁):  
+Setelah mengontrol pengaruh age, terdapat perbedaan yang signifikan pada rata-rata gabungan antara capital.loss dan capital.gain berdasarkan paling tidak satu kelompok dari occupation, atau income.  
+
+Semua variabel bermakna secara multivariat, dengan nilai p < 0.001. Maka, tolak H₀.  
+Setelah mengontrol age, terdapat perbedaan yang signifikan dalam rata-rata gabungan antara capital.gain dan capital.loss berdasarkan paling tidak satu dari occupation, atau income.
+
+## Link Publikasi RPubs
+
+Hasil analisis ini telah dipublikasikan di RPubs dan dapat diakses melalui tautan berikut:
+
+[Klik di sini untuk melihat hasil di RPubs](https://rpubs.com/EDOOO/Mancova)
